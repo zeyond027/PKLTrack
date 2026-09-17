@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PKLTrack</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  body{background:#0f172a;color:#e2e8f0}
+  .navbar,.card{background:#1e293b!important;border-color:#334155!important}
+  .text-muted{color:#94a3b8!important}
+  .table{--bs-table-bg:#1e293b;--bs-table-color:#e2e8f0}
+  .form-control,.form-select{background:#0f172a;color:#e2e8f0;border-color:#475569}
+  .form-control:focus,.form-select:focus{background:#0f172a;color:#fff}
+  .progress{background:#334155}
+  .brand{color:#60a5fa!important;font-weight:700}
+  .nav-link{cursor:pointer}
+</style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark border-bottom mb-4">
+  <div class="container">
+    <a class="navbar-brand brand" href="#/">PKLTrack</a>
+    <div class="navbar-nav">
+      <a class="nav-link" href="#/">Dashboard</a>
+      <a class="nav-link" href="#/activities">Kegiatan</a>
+      <a class="nav-link" href="#/competencies">Kompetensi</a>
+      <a class="nav-link" id="exportPdfLink" href="javascript:void(0)">Export PDF</a>
+    </div>
+  </div>
+</nav>
+<main class="container pb-5">
+  <div id="flash"></div>
+  <div id="app"></div>
+</main>
+
+<script>
+// ---------- Data layer (localStorage) ----------
+const LS_ACTIVITIES = "pkltrack_activities";
+const LS_COMPETENCIES = "pkltrack_competencies";
+
+function loadActivities(){
+  return JSON.parse(localStorage.getItem(LS_ACTIVITIES) || "[]");
+}
+function saveActivities(list){
+  localStorage.setItem(LS_ACTIVITIES, JSON.stringify(list));
+}
+function loadCompetencies(){
+  let data = localStorage.getItem(LS_COMPETENCIES);
+  if(!data){
+    const seed = [
+      {id:1, name:"Monitoring jaringan", description:"Memantau koneksi dan aplikasi jaringan", progress:80},
+      {id:2, name:"Konfigurasi perangkat", description:"Mempelajari konfigurasi perangkat jaringan", progress:60},
+      {id:3, name:"Troubleshooting", description:"Menganalisis dan menangani gangguan", progress:70},
+      {id:4, name:"Dokumentasi teknis", description:"Membuat catatan dan laporan kegiatan", progress:90}
+    ];
+    localStorage.setItem(LS_COMPETENCIES, JSON.stringify(seed));
+    return seed;
+  }
+  return JSON.parse(data);
+}
+function saveCompetencies(list){
+  localStorage.setItem(LS_COMPETENCIES, JSON.stringify(list));
+}
+function nextId(list){
+  return list.length ? Math.max(...list.map(x=>x.id)) + 1 : 1;
+}
+
+// ---------- Flash messages ----------
+function flash(message, category){
+  const el = document.getElementById("flash");
+  el.innerHTML = `<div class="alert alert-${category}">${escapeHtml(message)}</div>`;
+  setTimeout(()=>{ el.innerHTML = ""; }, 3500);
+}
+function escapeHtml(str){
+  const d = document.createElement("div");
+  d.innerText = str;
+  return d.innerHTML;
+}
+
+// ---------- Chart instance tracker ----------
+let statusChartInstance = null;
+
+// ---------- Views ----------
+function renderDashboard(){
+  const activities = loadActivities();
+  const competencies = loadCompetencies();
+  const total = activities.length;
+  const done = activities.filter(a=>a.status==="Selesai").length;
+  const process = activities.filter(a=>a.status==="Diproses").length;
+  const pending = activities.filter(a=>a.status==="Belum").length;
+  const completion = total ? Math.round(done/total*100) : 0;
+  const avgComp = competencies.length ? Math.round(competencies.reduce((s,c)=>s+c.progress,0)/competencies.length) : 0;
+
+  const recent = [...activities].sort((a,b)=> (b.activity_date+b.id).localeCompare(a.activity_date+a.id)).slice(0,5);
+
+  let compHtml = competencies.map(c => `
+    <div class="mb-3">
+      <div class="d-flex justify-content-between"><span>${escapeHtml(c.name)}</span><span>${c.progress}%</span></div>
+      <div class="progress"><div class="progress-bar bg-info" style="width:${c.progress}%"></div></div>
+    </div>`).join("");
+
+  let rowsHtml = recent.length ? recent.map(a => `
+    <tr><td>${escapeHtml(a.activity_date)}</td><td>${escapeHtml(a.title)}</td><td>${escapeHtml(a.status)}</td></tr>
+  `).join("") : `<tr><td colspan="3">Belum ada kegiatan.</td></tr>`;
+
+  document.getElementById("app").innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div><h2>Dashboard PKL</h2><p class="text-muted">Pantau kegiatan dan perkembangan kompetensi kamu.</p></div>
+      <a href="#/activities/add" class="btn btn-primary">+ Tambah Kegiatan</a>
+    </div>
+    <div class="row g-3 mb-4">
+      <div class="col-md-3"><div class="card p-3"><small class="text-muted">Total kegiatan</small><h2>${total}</h2></div></div>
+      <div class="col-md-3"><div class="card p-3"><small class="text-muted">Selesai</small><h2 class="text-success">${done}</h2></div></div>
+      <div class="col-md-3"><div class="card p-3"><small class="text-muted">Diproses</small><h2 class="text-warning">${process}</h2></div></div>
+      <div class="col-md-3"><div class="card p-3"><small class="text-muted">Progres kompetensi</small><h2 class="text-info">${avgComp}%</h2></div></div>
+    </div>
+    <div class="row g-4">
+      <div class="col-lg-7"><div class="card p-4"><h5>Progres kegiatan</h5><canvas id="statusChart"></canvas></div></div>
+      <div class="col-lg-5"><div class="card p-4"><h5>Kompetensi</h5>${compHtml}</div></div>
+    </div>
+    <div class="card p-4 mt-4">
+      <div class="d-flex justify-content-between"><h5>Kegiatan terbaru</h5><a href="#/activities">Lihat semua</a></div>
+      <table class="table mt-2"><thead><tr><th>Tanggal</th><th>Kegiatan</th><th>Status</th></tr></thead>
+      <tbody>${rowsHtml}</tbody></table>
+    </div>
+  `;
+
+  if(statusChartInstance) statusChartInstance.destroy();
+  statusChartInstance = new Chart(document.getElementById('statusChart'), {
+    type: 'doughnut',
+    data: { labels: ['Selesai','Diproses','Belum'], datasets: [{ data: [done, process, pending] }] },
+    options: { plugins: { legend: { labels: { color: '#e2e8f0' } } } }
+  });
+}
+
+function renderActivities(){
+  const activities = [...loadActivities()].sort((a,b)=> (b.activity_date+b.id).localeCompare(a.activity_date+a.id));
+  let rows = activities.length ? activities.map(a => {
+    const desc = a.description.length > 70 ? escapeHtml(a.description.slice(0,70)) + "..." : escapeHtml(a.description);
+    const photo = a.photo ? `<img src="${a.photo}" width="70" class="rounded">` : "-";
+    return `<tr>
+      <td>${escapeHtml(a.activity_date)}</td>
+      <td>${escapeHtml(a.title)}</td>
+      <td>${desc}</td>
+      <td>${escapeHtml(a.status)}</td>
+      <td>${photo}</td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="deleteActivity(${a.id})">Hapus</button></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="6">Belum ada data.</td></tr>`;
+
+  document.getElementById("app").innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h2>Kegiatan Harian</h2><a href="#/activities/add" class="btn btn-primary">+ Tambah Kegiatan</a>
+    </div>
+    <div class="card p-3"><table class="table align-middle">
+      <thead><tr><th>Tanggal</th><th>Kegiatan</th><th>Deskripsi</th><th>Status</th><th>Foto</th><th>Aksi</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  `;
+}
+
+function deleteActivity(id){
+  if(!confirm("Hapus kegiatan ini?")) return;
+  const list = loadActivities().filter(a => a.id !== id);
+  saveActivities(list);
+  flash("Kegiatan dihapus.", "success");
+  renderActivities();
+}
+
+function renderActivityForm(){
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById("app").innerHTML = `
+    <div class="row justify-content-center"><div class="col-lg-8"><div class="card p-4">
+      <h2 class="mb-4">Tambah Kegiatan PKL</h2>
+      <form id="activityForm">
+        <label class="form-label">Tanggal</label>
+        <input type="date" name="activity_date" value="${today}" class="form-control mb-3" required>
+        <label class="form-label">Nama kegiatan</label>
+        <input name="title" class="form-control mb-3" placeholder="Contoh: Monitoring jaringan" required>
+        <label class="form-label">Deskripsi</label>
+        <textarea name="description" class="form-control mb-3" rows="5" placeholder="Jelaskan kegiatan yang dilakukan..." required></textarea>
+        <label class="form-label">Status</label>
+        <select name="status" class="form-select mb-3">
+          <option>Selesai</option><option>Diproses</option><option>Belum</option>
+        </select>
+        <label class="form-label">Foto dokumentasi</label>
+        <input type="file" name="photo" accept=".png,.jpg,.jpeg,.webp" class="form-control mb-4">
+        <button class="btn btn-primary" type="submit">Simpan Kegiatan</button>
+        <a href="#/activities" class="btn btn-secondary">Batal</a>
+      </form>
+    </div></div></div>
+  `;
+
+  document.getElementById("activityForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    const form = e.target;
+    const activity_date = form.activity_date.value;
+    const title = form.title.value.trim();
+    const description = form.description.value.trim();
+    const status = form.status.value;
+    const file = form.photo.files[0];
+
+    const allowed = ["png","jpg","jpeg","webp"];
+    function finishSave(photoDataUrl){
+      const list = loadActivities();
+      list.push({
+        id: nextId(list),
+        activity_date, title, description, status,
+        photo: photoDataUrl || null,
+        created_at: new Date().toISOString()
+      });
+      saveActivities(list);
+      flash("Kegiatan berhasil ditambahkan.", "success");
+      location.hash = "#/activities";
+    }
+
+    if(file){
+      const ext = file.name.split(".").pop().toLowerCase();
+      if(!allowed.includes(ext)){
+        flash("Format foto harus PNG, JPG, JPEG, atau WEBP.", "danger");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => finishSave(reader.result);
+      reader.readAsDataURL(file);
+    } else {
+      finishSave(null);
+    }
+  });
+}
+
+function renderCompetencies(){
+  const competencies = loadCompetencies();
+  let listHtml = competencies.map(c => `
+    <div class="mb-4">
+      <div class="d-flex justify-content-between"><strong>${escapeHtml(c.name)}</strong><span>${c.progress}%</span></div>
+      <small class="text-muted">${escapeHtml(c.description||"")}</small>
+      <div class="progress my-2"><div class="progress-bar bg-info" style="width:${c.progress}%"></div></div>
+      <form class="d-flex gap-2 update-comp-form" data-id="${c.id}">
+        <input type="number" min="0" max="100" name="progress" value="${c.progress}" class="form-control">
+        <button class="btn btn-outline-info" type="submit">Update</button>
+      </form>
+    </div>`).join("");
+
+  document.getElementById("app").innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div><h2>Kompetensi PKL</h2><p class="text-muted">Catat kemampuan yang sudah kamu pelajari.</p></div>
+    </div>
+    <div class="row g-4">
+      <div class="col-lg-7"><div class="card p-4">${listHtml || '<p class="text-muted">Belum ada kompetensi.</p>'}</div></div>
+      <div class="col-lg-5"><div class="card p-4">
+        <h5>Tambah Kompetensi</h5>
+        <form id="addCompForm">
+          <input name="name" class="form-control mb-3" placeholder="Nama kompetensi" required>
+          <textarea name="description" class="form-control mb-3" placeholder="Deskripsi"></textarea>
+          <input type="number" name="progress" min="0" max="100" value="0" class="form-control mb-3">
+          <button class="btn btn-primary" type="submit">Tambah</button>
+        </form>
+      </div></div>
+    </div>
+  `;
+
+  document.querySelectorAll(".update-comp-form").forEach(form => {
+    form.addEventListener("submit", function(e){
+      e.preventDefault();
+      const id = parseInt(form.dataset.id);
+      let progress = parseInt(form.progress.value) || 0;
+      progress = Math.max(0, Math.min(100, progress));
+      const list = loadCompetencies();
+      const item = list.find(c => c.id === id);
+      if(item) item.progress = progress;
+      saveCompetencies(list);
+      flash("Progres diperbarui.", "success");
+      renderCompetencies();
+    });
+  });
+
+  document.getElementById("addCompForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    const form = e.target;
+    const name = form.name.value.trim();
+    const description = form.description.value.trim();
+    let progress = parseInt(form.progress.value) || 0;
+    progress = Math.max(0, Math.min(100, progress));
+    if(!name) return;
+    const list = loadCompetencies();
+    list.push({ id: nextId(list), name, description, progress });
+    saveCompetencies(list);
+    flash("Kompetensi ditambahkan.", "success");
+    renderCompetencies();
+  });
+}
+
+// ---------- PDF export ----------
+function exportPdf(){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "cm", format: "a4" });
+  const activities = [...loadActivities()].sort((a,b)=> (b.activity_date).localeCompare(a.activity_date));
+  const competencies = loadCompetencies();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let y = 2;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text("PKLTrack - Laporan Dokumentasi PKL", 2, y);
+  y += 0.8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const now = new Date();
+  const stamp = String(now.getDate()).padStart(2,"0") + "-" + String(now.getMonth()+1).padStart(2,"0") + "-" + now.getFullYear() +
+    " " + String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0");
+  doc.text("Dibuat pada: " + stamp, 2, y);
+  y += 1.2;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("Daftar Kompetensi", 2, y);
+  y += 0.6;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  competencies.forEach(item => {
+    doc.text(`- ${item.name}: ${item.progress}%`, 2.2, y);
+    y += 0.45;
+  });
+
+  y += 0.4;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("Kegiatan PKL", 2, y);
+  y += 0.6;
+  doc.setFontSize(9);
+
+  activities.forEach(item => {
+    if(y > pageHeight - 3){
+      doc.addPage();
+      y = 2;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text(`${item.activity_date} | ${item.title} | ${item.status}`, 2.2, y);
+    y += 0.4;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const desc = item.description || "";
+    for(let i=0; i<desc.length; i+=95){
+      if(y > pageHeight - 2){
+        doc.addPage();
+        y = 2;
+      }
+      doc.text(desc.slice(i, i+95), 2.5, y);
+      y += 0.35;
+    }
+    y += 0.25;
+  });
+
+  doc.save("laporan_pkltrack.pdf");
+}
+document.getElementById("exportPdfLink").addEventListener("click", exportPdf);
+
+// ---------- Router ----------
+function route(){
+  const hash = location.hash || "#/";
+  if(hash === "#/" || hash === ""){
+    renderDashboard();
+  } else if(hash === "#/activities"){
+    renderActivities();
+  } else if(hash === "#/activities/add"){
+    renderActivityForm();
+  } else if(hash === "#/competencies"){
+    renderCompetencies();
+  } else {
+    renderDashboard();
+  }
+}
+window.addEventListener("hashchange", route);
+window.addEventListener("DOMContentLoaded", route);
+</script>
+</body>
+</html>
