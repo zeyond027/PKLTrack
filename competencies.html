@@ -1,9 +1,0 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4"><div><h2>Kompetensi PKL</h2><p class="text-muted">Catat kemampuan yang sudah kamu pelajari.</p></div></div>
-<div class="row g-4"><div class="col-lg-7"><div class="card p-4">
-{% for c in competencies %}<div class="mb-4"><div class="d-flex justify-content-between"><strong>{{c.name}}</strong><span>{{c.progress}}%</span></div><small class="text-muted">{{c.description}}</small><div class="progress my-2"><div class="progress-bar bg-info" style="width:{{c.progress}}%"></div></div>
-<form method="post" action="/competencies/update/{{c.id}}" class="d-flex gap-2"><input type="number" min="0" max="100" name="progress" value="{{c.progress}}" class="form-control"><button class="btn btn-outline-info">Update</button></form></div>{% endfor %}
-</div></div>
-<div class="col-lg-5"><div class="card p-4"><h5>Tambah Kompetensi</h5><form method="post"><input name="name" class="form-control mb-3" placeholder="Nama kompetensi" required><textarea name="description" class="form-control mb-3" placeholder="Deskripsi"></textarea><input type="number" name="progress" min="0" max="100" value="0" class="form-control mb-3"><button class="btn btn-primary">Tambah</button></form></div></div></div>
-{% endblock %}
